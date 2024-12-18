@@ -32,3 +32,6 @@ A multi-page Streamlit application for wrapped-style analytics visualization.
    ```bash
    streamlit run src/app.py
    ```
+
+
+6. And that's really it. 
