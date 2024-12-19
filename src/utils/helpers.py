@@ -4,9 +4,12 @@ def set_page_config():
     """Configure the Streamlit page settings."""
     st.set_page_config(
         page_title="JoeG Streamlit Wrapped",
-        page_icon="🚀",
+        page_icon="📊",
         layout="wide",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="expanded",
+        menu_items={
+            'About': "Data Analysis Tool for JSON files"
+        }
     )
 
 def show_header():
