@@ -3,6 +3,14 @@ import streamlit as st
 import pandas as pd
 from utils.helpers import show_header
 
+def categorize_platform(platform):
+    """Categorize platforms into Mobile, Desktop, or Web."""
+    if platform in ['android', 'ios']:
+        return 'Mobile'
+    elif platform in ['windows', 'osx', 'linux']:
+        return 'Desktop'
+    return 'Web'
+
 def show():
     """Display the top songs analysis."""
     show_header()
@@ -20,8 +28,11 @@ def show():
         # Convert timestamp to datetime if not already
         df['ts'] = pd.to_datetime(df['ts'])
         
+        # Add device type categorization
+        df['device_type'] = df['platform'].apply(categorize_platform)
+        
         # Create filters
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             # Year filter
             years = sorted(df['ts'].dt.year.unique())
@@ -31,10 +42,18 @@ def show():
             )
             
         with col2:
+            # Platform filter
+            devices = sorted(df['device_type'].unique())
+            selected_device = st.selectbox(
+                "Device Type",
+                ["All Devices"] + list(devices)
+            )
+            
+        with col3:
             # Filter for skipped songs
             include_skipped = st.checkbox("Include Skipped Songs", value=False)
             
-        with col3:
+        with col4:
             # Minimum play time filter (in seconds)
             min_seconds = st.number_input(
                 "Minimum Seconds Played",
@@ -46,6 +65,9 @@ def show():
         # Apply filters
         if selected_year != "All Years":
             df = df[df['ts'].dt.year == selected_year]
+            
+        if selected_device != "All Devices":
+            df = df[df['device_type'] == selected_device]
             
         if not include_skipped:
             df = df[~df['skipped']]
@@ -59,7 +81,8 @@ def show():
             'ms_played': 'sum',
             'ts': 'count',
             'skipped': 'sum',
-            'shuffle': 'mean'  # This will give us % of shuffled plays
+            'shuffle': 'mean',  # This will give us % of shuffled plays
+            'device_type': lambda x: ', '.join(sorted(x.unique()))  # List of devices used
         }).reset_index()
         
         # Rename and calculate columns
@@ -69,7 +92,8 @@ def show():
             'master_metadata_album_album_name': 'Album',
             'ts': 'Play Count',
             'shuffle': 'Shuffle %',
-            'skipped': 'Times Skipped'
+            'skipped': 'Times Skipped',
+            'device_type': 'Devices Used'
         })
         
         songs_df['Minutes Played'] = (songs_df['ms_played'] / (1000 * 60)).round(2)
@@ -91,13 +115,21 @@ def show():
             avg_shuffle = (df['shuffle'].mean() * 100).round(1)
             st.metric("Shuffle %", f"{avg_shuffle}%")
         
-        # Display the sorted table
-        st.subheader(f"Songs Ranking {'(' + str(selected_year) + ')' if selected_year != 'All Years' else ''}")
+        # Create title with applied filters
+        title_filters = []
+        if selected_year != "All Years":
+            title_filters.append(str(selected_year))
+        if selected_device != "All Devices":
+            title_filters.append(selected_device)
+        
+        title = "Songs Ranking" + (f" ({', '.join(title_filters)})" if title_filters else "")
+        st.subheader(title)
         
         # Format the table for display
         display_df = songs_df[[
             'Song', 'Artist', 'Album', 'Play Count', 
-            'Minutes Played', 'Shuffle %', 'Times Skipped'
+            'Minutes Played', 'Shuffle %', 'Times Skipped',
+            'Devices Used'
         ]].copy()
         
         display_df = display_df.reset_index(drop=True)
@@ -110,7 +142,8 @@ def show():
                 "Play Count": st.column_config.NumberColumn(format="%d"),
                 "Minutes Played": st.column_config.NumberColumn(format="%.2f"),
                 "Shuffle %": st.column_config.NumberColumn(format="%.1f%%"),
-                "Times Skipped": st.column_config.NumberColumn(format="%d")
+                "Times Skipped": st.column_config.NumberColumn(format="%d"),
+                "Devices Used": st.column_config.TextColumn(help="Devices used to play this song")
             }
         )
         

@@ -1,80 +1,31 @@
-# pages/page3.py
+# pages/page5.py
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.express as px
 from utils.helpers import show_header
 
-def create_simple_bar(df, title, color='#3498db'):
-    """Create a simplified bar chart showing platform usage."""
-    summary = df.groupby('platform').agg({
-        'ms_played': lambda x: sum(x) / (1000 * 60 * 60)  # Convert to hours
-    }).reset_index().sort_values('ms_played', ascending=True)
-    
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=summary['ms_played'],
-        y=summary['platform'],
-        text=[f"{h:.1f}h" for h in summary['ms_played']],
-        textposition='auto',
-        marker_color=color,
-        marker=dict(line=dict(width=0)),
-        orientation='h',
-        hovertemplate="%{y}<br>%{x:.1f} hours<extra></extra>"
-    ))
-    
-    fig.update_layout(
-        title=title,
-        showlegend=False,
-        xaxis_title="Hours Listened",
-        yaxis_title=None,
-        margin=dict(t=40, b=20, l=20, r=20),
-        height=300,
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        bargap=0.3
-    )
-     
-    return fig
+def categorize_platform(platform):
+    """Categorize platforms into Mobile, Desktop, or Web."""
+    if platform in ['android', 'ios']:
+        return 'Mobile'
+    elif platform in ['windows', 'osx', 'linux']:
+        return 'Desktop'
+    return 'Web'
 
-def create_platform_timeline(df):
-    """Create a line chart showing platform usage over time."""
-    # Resample by month and pivot for platforms
-    monthly = df.groupby([pd.Grouper(key='ts', freq='M'), 'platform']).agg({
+def create_device_timeline(df):
+    """Create a line chart showing device type usage over time."""
+    monthly = df.groupby([pd.Grouper(key='ts', freq='M'), 'device_type']).agg({
         'ms_played': lambda x: sum(x) / (1000 * 60 * 60)  # Convert to hours
     }).reset_index()
     
-    # Pivot the data for plotting
-    pivot_data = monthly.pivot(index='ts', columns='platform', values='ms_played').fillna(0)
-    
-    # Create the line chart
-    fig = go.Figure()
-    
-    colors = {
-        'android': '#a4c639',
-        'ios': '#a2aaad',
-        'osx': '#555555',
-        'windows': '#00a4ef',
-        'web player': '#1db954',
-        'linux': '#dd4814'
-    }
-    
-    for platform in pivot_data.columns:
-        fig.add_trace(go.Scatter(
-            x=pivot_data.index,
-            y=pivot_data[platform],
-            name=platform.title(),
-            mode='lines',
-            line=dict(width=2, color=colors.get(platform, '#3498db')),
-            hovertemplate="%{x}<br>%{y:.1f} hours<extra></extra>"
-        ))
+    fig = px.line(monthly, x='ts', y='ms_played', color='device_type',
+                  title='Device Usage Over Time',
+                  labels={'ms_played': 'Hours Played', 'ts': 'Date', 'device_type': 'Device Type'})
     
     fig.update_layout(
-        title="Platform Usage Over Time",
-        showlegend=True,
-        xaxis_title=None,
-        yaxis_title="Hours Listened",
-        margin=dict(t=40, b=20, l=20, r=20),
         height=400,
+        hovermode='x unified',
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
         legend=dict(
@@ -89,7 +40,7 @@ def create_platform_timeline(df):
     return fig
 
 def show():
-    """Display platform usage patterns."""
+    """Display device type usage patterns."""
     show_header()
     
     if not st.session_state.data_loaded:
@@ -98,79 +49,156 @@ def show():
         
     st.header("How Do You Listen?")
     
+    # Get the base dataframe
     df = st.session_state.df.copy()
     df['ts'] = pd.to_datetime(df['ts'])
+    df['device_type'] = df['platform'].apply(categorize_platform)
     
     try:
-        # Overall Platform Usage
-        st.subheader("Your Platform Usage")
-        fig_platforms = create_simple_bar(df, "Total Listening Time by Platform", '#e67e22')
-        st.plotly_chart(fig_platforms, use_container_width=True)
+        # Create filters in columns like page1.py
+        col1, col2, col3 = st.columns(3)
         
-        # Calculate and display primary platform
-        platform_hours = df.groupby('platform').agg({
+        with col1:
+            # Year filter
+            years = sorted(df['ts'].dt.year.unique())
+            selected_year = st.selectbox(
+                "Select Year",
+                ["All Years"] + list(years)
+            )
+            
+        with col2:
+            # Filter for skipped songs
+            include_skipped = st.checkbox("Include Skipped Songs", value=False)
+            
+        with col3:
+            # Minimum play time filter (in seconds)
+            min_seconds = st.number_input(
+                "Minimum Seconds Played",
+                min_value=0,
+                value=30,
+                help="Filter out songs played less than this many seconds"
+            )
+            
+        # Apply filters
+        if selected_year != "All Years":
+            df = df[df['ts'].dt.year == selected_year]
+            time_period = str(selected_year)
+        else:
+            time_period = f"{min(years)}-{max(years)}"
+            
+        if not include_skipped:
+            df = df[~df['skipped']]
+            
+        df = df[df['ms_played'] >= (min_seconds * 1000)]
+        
+        # Calculate device type metrics
+        device_stats = df.groupby('device_type').agg({
+            'ms_played': lambda x: sum(x) / (1000 * 60 * 60),  # Hours
+            'ts': 'count',  # Play count
+            'master_metadata_track_name': 'nunique',  # Unique tracks
+            'skipped': 'sum',  # Skipped count
+            'shuffle': 'mean'  # Shuffle percentage
+        }).reset_index()
+        
+        device_stats.columns = ['Device Type', 'Hours', 'Plays', 'Unique Tracks', 'Skipped', 'Shuffle %']
+        
+        # Calculate additional metrics
+        device_stats['Avg Session (mins)'] = (device_stats['Hours'] * 60) / device_stats['Plays']
+        device_stats['Skip Rate'] = (device_stats['Skipped'] / device_stats['Plays'] * 100)
+        device_stats['Shuffle %'] = device_stats['Shuffle %'] * 100
+        
+        # Sort by hours played
+        device_stats = device_stats.sort_values('Hours', ascending=False)
+        
+        # Overview visualization
+        st.subheader(f"Device Usage Overview ({time_period})")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Pie chart of usage distribution
+            fig_pie = px.pie(
+                device_stats,
+                values='Hours',
+                names='Device Type',
+                title='Listening Time Distribution'
+            )
+            fig_pie.update_traces(
+                textposition='inside',
+                textinfo='percent+label',
+                hole=0.4
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
+        with col2:
+            # Primary device stats
+            if not device_stats.empty:
+                primary_device = device_stats.iloc[0]
+                total_hours = device_stats['Hours'].sum()
+                
+                st.metric("Primary Device", primary_device['Device Type'])
+                st.metric("Hours on Primary", f"{primary_device['Hours']:.1f}")
+                st.metric(
+                    "% of Listening",
+                    f"{(primary_device['Hours'] / total_hours * 100):.1f}%"
+                )
+        
+        # Usage timeline (show for all views now)
+        st.subheader("Usage Patterns")
+        timeline_fig = create_device_timeline(df)
+        st.plotly_chart(timeline_fig, use_container_width=True)
+        
+        # Detailed comparison
+        st.subheader("Device Comparison")
+        comparison_df = device_stats[[
+            'Device Type', 'Hours', 'Plays', 'Unique Tracks',
+            'Avg Session (mins)', 'Skip Rate', 'Shuffle %'
+        ]].copy()
+        
+        st.dataframe(
+            comparison_df,
+            use_container_width=True,
+            column_config={
+                "Hours": st.column_config.NumberColumn(format="%.1f"),
+                "Plays": st.column_config.NumberColumn(format="%d"),
+                "Unique Tracks": st.column_config.NumberColumn(format="%d"),
+                "Avg Session (mins)": st.column_config.NumberColumn(format="%.1f"),
+                "Skip Rate": st.column_config.NumberColumn(format="%.1f%%"),
+                "Shuffle %": st.column_config.NumberColumn(format="%.1f%%")
+            }
+        )
+        
+        # Time of day analysis
+        st.subheader(f"When Do You Use Each Device? ({time_period})")
+        
+        df['part_of_day'] = pd.cut(
+            df['ts'].dt.hour,
+            bins=[0, 6, 12, 18, 24],
+            labels=['Night (12AM-6AM)', 'Morning (6AM-12PM)', 
+                   'Afternoon (12PM-6PM)', 'Evening (6PM-12AM)']
+        )
+        
+        time_device = df.groupby(['device_type', 'part_of_day']).agg({
             'ms_played': lambda x: sum(x) / (1000 * 60 * 60)
         }).reset_index()
         
-        primary_platform = platform_hours.loc[platform_hours['ms_played'].idxmax()]
-        platform_percentage = (primary_platform['ms_played'] / platform_hours['ms_played'].sum() * 100)
+        time_fig = px.bar(
+            time_device,
+            x='part_of_day',
+            y='ms_played',
+            color='device_type',
+            title='Device Usage by Time of Day',
+            labels={'ms_played': 'Hours Played', 'part_of_day': 'Time of Day', 'device_type': 'Device Type'}
+        )
         
-        st.markdown(f"📱 Your primary listening platform is **{primary_platform['platform'].upper()}** "
-                   f"with **{platform_percentage:.1f}%** of your total listening time")
+        time_fig.update_layout(
+            height=400,
+            bargap=0.2,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)'
+        )
         
-        st.divider()
-        
-        # Platform Usage Over Time
-        st.subheader("Platform Usage Trends")
-        fig_timeline = create_platform_timeline(df)
-        st.plotly_chart(fig_timeline, use_container_width=True)
-        
-        # Recent Platform Usage
-        st.subheader("Recent Platform Usage")
-        latest_month = df['ts'].max().strftime('%B %Y')
-        recent_df = df[df['ts'].dt.to_period('M') == df['ts'].max().to_period('M')]
-        
-        recent_platforms = recent_df.groupby('platform').agg({
-            'ms_played': lambda x: sum(x) / (1000 * 60 * 60)
-        }).reset_index().sort_values('ms_played', ascending=False)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric(
-                "Most Used Platform",
-                recent_platforms.iloc[0]['platform'].upper(),
-                f"{recent_platforms.iloc[0]['ms_played']:.1f} hours"
-            )
-        with col2:
-            if len(recent_platforms) > 1:
-                st.metric(
-                    "Second Most Used",
-                    recent_platforms.iloc[1]['platform'].upper(),
-                    f"{recent_platforms.iloc[1]['ms_played']:.1f} hours"
-                )
-        
-        # Mobile vs Desktop Analysis
-        mobile_platforms = ['android', 'ios']
-        desktop_platforms = ['windows', 'osx', 'linux']
-        
-        mobile_hours = df[df['platform'].isin(mobile_platforms)]['ms_played'].sum() / (1000 * 60 * 60)
-        desktop_hours = df[df['platform'].isin(desktop_platforms)]['ms_played'].sum() / (1000 * 60 * 60)
-        
-        st.divider()
-        st.subheader("Mobile vs Desktop")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Mobile Listening", f"{mobile_hours:.1f} hours")
-        with col2:
-            st.metric("Desktop Listening", f"{desktop_hours:.1f} hours")
-        
-        # Calculate the ratio
-        total_hours = mobile_hours + desktop_hours
-        mobile_pct = (mobile_hours / total_hours * 100) if total_hours > 0 else 0
-        
-        st.markdown(f"📊 You spend **{mobile_pct:.1f}%** of your time listening on mobile devices "
-                   f"and **{100-mobile_pct:.1f}%** on desktop platforms")
+        st.plotly_chart(time_fig, use_container_width=True)
             
     except Exception as e:
         st.error(f"Error processing data: {str(e)}")
